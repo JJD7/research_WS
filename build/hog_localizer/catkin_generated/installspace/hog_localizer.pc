@@ -1,0 +1,8 @@
+prefix=/home/jd/research_ws/install
+
+Name: hog_localizer
+Description: Description of hog_localizer
+Version: 0.0.0
+Cflags: -I/home/jd/research_ws/install/include
+Libs: -L/home/jd/research_ws/install/lib 
+Requires: roscpp rospy std_msgs nav_msgs cv_bridge sensor_msgs geometry_msgs message_filters

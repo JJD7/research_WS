@@ -1,0 +1,2 @@
+hog_localizer
+-DCATKIN_DEVEL_PREFIX=/home/jd/research_ws/devel -DCMAKE_INSTALL_PREFIX=/home/jd/research_ws/install -G Unix Makefiles
