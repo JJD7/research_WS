@@ -31,6 +31,10 @@ opencv2/imgproc/imgproc.hpp
 -
 opencv2/objdetect.hpp
 /home/jd/research_ws/src/hog_localizer/include/hog_localizer/opencv2/objdetect.hpp
+opencv2/features2d.hpp
+-
+opencv2/xfeatures2d.hpp
+-
 ros/ros.h
 -
 ros/console.h

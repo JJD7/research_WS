@@ -11,10 +11,10 @@ int indx = 0;
 
 # define PI           3.14159265358979323846
 
-hogLocalizer::hogLocalizer(ros::NodeHandle& nh)
+Localizer::Localizer(ros::NodeHandle& nh)
 {
-    frameSize_x = 3488; //initial value based on map image size. TODO! Need to code this to be dependant in input image size
-    frameSize_y = 2560; //initial value based on map image size. TODO! Need to code this to be dependant in input image size
+    frameSize_x = 256; //initial value based on map image size. TODO! Need to code this to be dependant in input image size
+    frameSize_y = 128; //initial value based on map image size. TODO! Need to code this to be dependant in input image size
     blockSize = 32;     //Hog argument
     blockStride = 16;   //Hog argument
     cellSize = 16;      //Hog argument
@@ -38,11 +38,12 @@ hogLocalizer::hogLocalizer(ros::NodeHandle& nh)
 
 }
 
-void hogLocalizer::loadMap()
+void Localizer::loadMap()
 {
     ROS_INFO("Loading Map image");
     mapImg = cv::imread(mapImgDIR.c_str(), CV_LOAD_IMAGE_COLOR);
     mapHog = mapImg.clone();
+    mapORB = mapImg.clone();
     if(mapImg.empty() ) // Check for invalid input
     {
         ROS_ERROR("Could not open or find the map image");
@@ -56,7 +57,7 @@ void hogLocalizer::loadMap()
     }
 }
 
-void hogLocalizer::segmentMap()
+void Localizer::segmentMap()
 {
     ROS_INFO("Segmenting Map and Collecting HOG Descriptors of Map Segments");
     //TODO Adjust frame size to match onboard images.
@@ -65,7 +66,6 @@ void hogLocalizer::segmentMap()
     int h = (int)mapImg.rows/frameSize_y;
 
     numSegments = w*h;
-
 
     cv::cvtColor(mapImg, grayMapImg, CV_BGR2GRAY);
     cv::Mat im = grayMapImg.clone();
@@ -82,29 +82,94 @@ void hogLocalizer::segmentMap()
             frames[vectIndex].imgFrame = cv::Mat(im, roi).clone();
             frames[vectIndex].px = i;   //record image frame x and y location. NOTE: this is the top left corner of image frame in pixels
             frames[vectIndex].py = j;
-            // Set HOG arguments and comput the descriptors
-            frames[vectIndex].hog.winSize = cv::Size(frameSize_x,frameSize_y);
-            frames[vectIndex].hog.blockSize = cv::Size(blockSize,blockSize);
-            frames[vectIndex].hog.blockStride = cv::Size(blockStride,blockStride);
-            frames[vectIndex].hog.cellSize = cv::Size(cellSize,cellSize);
-            frames[vectIndex].hog.nbins = gradientBinSize;
-            frames[vectIndex].hog.winSigma = -1;
-            frames[vectIndex].hog.histogramNormType = 0;
-            frames[vectIndex].hog.nlevels = 64;
-            frames[vectIndex].hog.compute(frames[vectIndex].imgFrame,frames[vectIndex].descriptors);//, cv::Size(0,0), cv::Size(0,0));//, frames[vectIndex].locations);
-            // Get the visualization of the HOG descriptors
-            frames[vectIndex].visFrame = getHogVis(frames[vectIndex].imgFrame, frames[vectIndex].descriptors);
-            frames[vectIndex].visFrame.copyTo(mapHog(roi));
-            //cv::imwrite( "map_HOG.jpg", mapHog );
+
+//            // Set HOG arguments and comput the descriptors
+//            frames[vectIndex].hog.winSize = cv::Size(frameSize_x,frameSize_y);
+//            frames[vectIndex].hog.blockSize = cv::Size(blockSize,blockSize);
+//            frames[vectIndex].hog.blockStride = cv::Size(blockStride,blockStride);
+//            frames[vectIndex].hog.cellSize = cv::Size(cellSize,cellSize);
+//            frames[vectIndex].hog.nbins = gradientBinSize;
+//            frames[vectIndex].hog.winSigma = -1;
+//            frames[vectIndex].hog.histogramNormType = 0;
+//            frames[vectIndex].hog.nlevels = 64;
+//            frames[vectIndex].hog.compute(frames[vectIndex].imgFrame,frames[vectIndex].descriptors);//, cv::Size(0,0), cv::Size(0,0));//, frames[vectIndex].locations);
+//            // Get the visualization of the HOG descriptors
+//            frames[vectIndex].visFrame = getHogVis(frames[vectIndex].imgFrame, frames[vectIndex].descriptors);
+//            frames[vectIndex].visFrame.copyTo(mapHog(roi));
+//            //cv::imwrite( "map_HOG.jpg", mapHog );
+
+            //ORB Feature Extraction
+            ORB_Features features = getOrbFeatures(frames[vectIndex].imgFrame);
+            frames[vectIndex].features = features;
+            cv::drawKeypoints(frames[vectIndex].imgFrame, frames[vectIndex].features.keypoints,frames[vectIndex].visFrame);
+            frames[vectIndex].visFrame.copyTo(mapORB(roi));
+//            cv::imshow("map", frames[vectIndex].visFrame);
+//            cv::waitKey(30);
+//            usleep(250000);
             vectIndex += 1;
         }
     }
+    std::cout << "Number of map segments " << frames.size() << std::endl;
+    //cv::imshow("map", mapORB);
+    //cv::waitKey(30);
+    cv::imwrite("ORB_Gap.png", mapORB);
+    MAX_FEATURES = 500;
 }
 
-cv::Mat hogLocalizer::getHogImg(cv::Mat& im)
+
+Localizer::ORB_Features Localizer::getOrbFeatures(cv::Mat& im)
+{
+    // Detect Orb features
+    ORB_Features features;
+    cv::Ptr<cv::Feature2D> orb = cv::ORB::create(MAX_FEATURES);
+    orb->detectAndCompute(im, cv::Mat(), features.keypoints, features.descriptors);
+
+    return features;
+}
+
+void Localizer::_ORB_Feature_Matcher(struct ORB_Features onboardFeatures, cv::Mat& im)
+{
+    std::vector<cv::DMatch> good_match_Holder;
+    unsigned int _numGoodMatches = 0;
+    int GoodMatchIndex = 0;
+
+    for (std::vector<Localizer::mapFrame>::iterator itt = frames.begin() ; itt != frames.end(); ++itt)
+    {
+        // Match features
+        std::vector<std::vector<cv::DMatch> > matches;
+        cv::BFMatcher matcher(cv::NORM_HAMMING);
+        matcher.knnMatch((*itt).features.descriptors, onboardFeatures.descriptors, matches, 2); //k=2: Count of best matches found per each query descriptor
+
+        // Filter Good Matches
+        std::vector<cv::DMatch> good_matches;
+        for(unsigned int k = 0; k < matches.size(); k++)
+        {
+            if(matches[k][0].distance < 0.7 * matches[k][1].distance && matches[k][0].distance < 400)
+            {
+                good_matches.push_back(matches[k][0]);
+            }
+        }
+
+        if(_numGoodMatches < good_matches.size())  //Found new larger set of good match count. I.e. more good matches found in current frame than previous saved frame
+        {
+            _numGoodMatches = good_matches.size(); //Store number of good matches for debug purposes
+            GoodMatchIndex = std::distance( frames.begin(), itt ); //Store index of current best match
+            good_match_Holder = good_matches;   //Store good mathces for drawing and visualizing, homography, and registration.
+        }
+    }
+
+
+    // Draw top matches
+    cv::Mat imMatches;
+    cv::drawMatches(frames[GoodMatchIndex].imgFrame, frames[GoodMatchIndex].features.keypoints, im, onboardFeatures.keypoints, good_match_Holder, imMatches);
+    cv::imshow("matches.jpg", imMatches);
+    cv::waitKey(30);
+}
+
+cv::Mat Localizer::getHogImg(cv::Mat& im)
 {
 
-    hogLocalizer::onboardImgFrame obImgFrame;
+    Localizer::onboardImgFrame obImgFrame;
     cv::cvtColor(im, obImgFrame.imgFrame, CV_BGR2GRAY);
 
     //Rescale onboard image to map px/meter resolution of map image
@@ -134,42 +199,7 @@ cv::Mat hogLocalizer::getHogImg(cv::Mat& im)
     return obImgFrame.visFrame;
 }
 
-void hogLocalizer::templateMatching( int, void* )
-{// Version of image registration using template matching. May not be used...
-
-    /// Source image to display
-    cv::Mat img_display, result;
-    mapImg.copyTo( img_display );
-
-    /// Create the result matrix
-    int result_cols =  mapImg.cols - templ.cols + 1;
-    int result_rows = mapImg.rows - templ.rows + 1;
-
-    result.create( result_rows, result_cols, CV_32FC1 );
-    //templ = cv::Mat(mapImg, r).clone();
-    /// Do the Matching and Normalize
-    cv::matchTemplate( img_display, templ, result, match_method );
-    cv::normalize( result, result, 0, 1, cv::NORM_MINMAX, -1, cv::Mat() );
-
-    /// Localizing the best match with minMaxLoc
-    double minVal; double maxVal; cv::Point minLoc; cv::Point maxLoc;
-    cv::Point matchLoc;
-
-    cv::minMaxLoc( result, &minVal, &maxVal, &minLoc, &maxLoc, cv::Mat() );
-
-    /// For SQDIFF and SQDIFF_NORMED, the best matches are lower values. For all the other methods, the higher the better
-    if( match_method  == CV_TM_SQDIFF || match_method == CV_TM_SQDIFF_NORMED )
-    { matchLoc = minLoc; }
-    else
-    { matchLoc = maxLoc; }
-
-    /// Show me what you got
-    cv::rectangle( img_display, matchLoc, cv::Point( matchLoc.x + templ.cols , matchLoc.y + templ.rows ), cv::Scalar::all(0), 2, 8, 0 );
-    cv::rectangle( result, matchLoc, cv::Point( matchLoc.x + templ.cols , matchLoc.y + templ.rows ), cv::Scalar::all(0), 2, 8, 0 );
-
-}
-
-cv::Mat hogLocalizer::getHogVis(cv::Mat& origImg, std::vector<float>& descriptorValues)
+cv::Mat Localizer::getHogVis(cv::Mat& origImg, std::vector<float>& descriptorValues)
 {
     // *** Hog visualization Code modified from originial referenced below ***
     // *** Author: Antonius Harijanto on 1/22/13.
@@ -383,7 +413,7 @@ cv::Mat hogLocalizer::getHogVis(cv::Mat& origImg, std::vector<float>& descriptor
 } // getHogVis
 
 
-void callback(const sensor_msgs::ImageConstPtr& rect_msg, const nav_msgs::Odometry::ConstPtr& odom_msg, hogLocalizer &localizer_ptr)
+void callback(const sensor_msgs::ImageConstPtr& rect_msg, const nav_msgs::Odometry::ConstPtr& odom_msg, Localizer &localizer_ptr)
 {
   cv_bridge::CvImagePtr rectIm_ptr;
 
@@ -399,26 +429,21 @@ void callback(const sensor_msgs::ImageConstPtr& rect_msg, const nav_msgs::Odomet
       ROS_ERROR("cv_bridge exception: %s", e.what());
   }
 
-//  localizer_ptr.templ = rectIm_ptr->image;
-//  localizer_ptr.templateMatching(0,0);
+    //Rescale onboard image to map px/meter resolution of map image
+    float resizeScale = 0.5;
 
-    cv::Mat hogImg = localizer_ptr.getHogImg(rectIm_ptr->image);
+    cv::Mat im;
+    cv::Mat scaledImg;
+    cv::cvtColor(rectIm_ptr->image, im, CV_BGR2GRAY);     //Convert current image to grayscale
+    cv::resize(im, scaledImg, cv::Size(im.cols*resizeScale, im.rows*resizeScale), 0, 0, CV_INTER_LINEAR); // rescale current grayscale onboard image
+    Localizer::ORB_Features features = localizer_ptr.getOrbFeatures(scaledImg);        //Extract features from current grayscale image
+    localizer_ptr._ORB_Feature_Matcher(features, scaledImg);
+    //cv::Mat visImg;
+    //visImg = rectIm_ptr->image;
+    //cv::drawKeypoints(im, features.keypoints,scaledImg);
 
-    //cv::imshow( "Source Image", rectIm_ptr->image );
-    cv::imshow( "Result window", hogImg );
-    //cv::imshow( "map", localizer_ptr.mapHog );
-    cv::waitKey(30);
-
-//    if(indx < localizer_ptr.frames.size())
-//    {
-//        indx += 1;
-//    }
-//    else
-//    {
-//        indx = 0;
-//    }
-
-
+    //cv::imshow( "Source Image", scaledImg );
+    //cv::waitKey(30);
 }
 
 int main(int argc, char **argv)
@@ -431,12 +456,12 @@ int main(int argc, char **argv)
     {
         /// Create windows
         //cv::namedWindow("Source Image", CV_WINDOW_NORMAL );
-        cv::namedWindow( "Result window", CV_WINDOW_NORMAL );
+        cv::namedWindow( "matches.jpg", CV_WINDOW_NORMAL );
         //cv::namedWindow("map", CV_WINDOW_NORMAL);
         cv::startWindowThread();
     }
 
-    hogLocalizer localizer(nh);
+    Localizer localizer(nh);
 
     ROS_INFO("Initializing Subscribers");
     message_filters::Subscriber<sensor_msgs::Image> left_rect_sub(nh, "/left_right/left_rect/image_raw", 1);

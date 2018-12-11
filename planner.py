@@ -124,7 +124,7 @@ def main():
     plan.set_Start_Goal((1,1),(120,200))
     plan.planner()
 
-    blurred = gaussian_filter(np.reshape(varMap[:,2],(rows,cols)), sigma=0.5)
+    blurred = gaussian_filter(np.reshape(varMap[:,2],(rows,cols)), sigma=4)
 
     fig = plt.figure()
     #ax = plt.axes(projection='3d')
@@ -144,7 +144,7 @@ def main():
     ax.set_xticks([])
     ax.set_yticks([])
     ax.set_zticks([])
-    ax.set_facecolor('black')
+    #ax.set_facecolor('black')
     plt.show()
 
 if __name__== "__main__":

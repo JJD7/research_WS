@@ -17,7 +17,8 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 #include "opencv2/objdetect.hpp"
-//#include "opencv2/ocl/ocl.hpp"
+#include <opencv2/features2d.hpp>
+#include <opencv2/xfeatures2d.hpp>
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wshadow"
@@ -37,14 +38,17 @@
 
 #pragma GCC diagnostic pop
 
-class hogLocalizer
+int MAX_FEATURES = 500;
+const float GOOD_MATCH_PERCENT = 0.001f;
+
+class Localizer
 {
 public:
-    hogLocalizer(ros::NodeHandle& nh);
+    Localizer(ros::NodeHandle& nh);
 
     //Declare Variables
     std::string mapImgDIR;
-    cv::Mat mapImg, templ, mapHog, grayMapImg;
+    cv::Mat mapImg, templ, mapHog, grayMapImg, mapORB;
     ros::Publisher pose_estimate;
     geometry_msgs::PoseStamped mavPose;
 
@@ -62,37 +66,51 @@ public:
     float v_FOV;
     float mapScale;
 
+    struct ORB_Features 
+	{
+	    //Orb Variables
+	    std::vector<cv::KeyPoint> keypoints;
+	    cv::Mat descriptors;
+	};
+
+    struct mapFrame //map frame segment of the google map image 
+	  {
+      int px;
+      int py;
+		//Hog variables
+	    std::vector<float> descriptors;
+            //std::vector<Point> locations;
+	    cv::HOGDescriptor hog;
+            //Orb Variables
+	    Localizer::ORB_Features features;
+	    	
+            cv::Mat visFrame;
+	    cv::Mat imgFrame;
+	    
+	  };
+
+    struct onboardImgFrame //May be removed in future. Stores same variables ass mapFrame
+	  {
+      int px;
+      int py;
+	    std::vector<float> descriptors;
+            //std::vector<Point> locations;
+            cv::Mat visFrame;
+	    cv::Mat imgFrame;
+	    cv::HOGDescriptor hog;
+	  };
+
+    std::vector<mapFrame> frames;	//Vector of map frames to srtore segmented map frames
+
     //Function Declarations
     void loadMap();
     void segmentMap();
-    void templateMatching( int, void* );
     cv::Mat getHogImg(cv::Mat& im);
-    void callback(const sensor_msgs::ImageConstPtr& rect_msg, const nav_msgs::Odometry::ConstPtr& odom_msg, hogLocalizer &localizer_ptr);
+    void callback(const sensor_msgs::ImageConstPtr& rect_msg, const nav_msgs::Odometry::ConstPtr& odom_msg, Localizer &localizer_ptr);
     cv::Mat getHogVis(cv::Mat& origImg, std::vector<float>& descriptorValues);
+    Localizer::ORB_Features getOrbFeatures(cv::Mat& im);
 
-    struct mapFrame
-	  {
-      int px;
-      int py;
-	    std::vector<float> descriptors;
-            //std::vector<Point> locations;
-            cv::Mat visFrame;
-	    cv::Mat imgFrame;
-	    cv::HOGDescriptor hog;
-	  };
-
-    struct onboardImgFrame
-	  {
-      int px;
-      int py;
-	    std::vector<float> descriptors;
-            //std::vector<Point> locations;
-            cv::Mat visFrame;
-	    cv::Mat imgFrame;
-	    cv::HOGDescriptor hog;
-	  };
-
-    std::vector<mapFrame> frames;
+    void _ORB_Feature_Matcher(struct ORB_Features onboardFeatures, cv::Mat& im);
 
 private:
     ros::NodeHandle nh_;
